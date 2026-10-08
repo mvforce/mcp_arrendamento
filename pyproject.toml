@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-arrendamento"
+version = "0.1.0"
+description = "Servidor MCP para o Sistema de Gestão de Arrendamento Portuário da ANTAQ"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Mesmo teto do mcp-sei: o SDK 2.0 removeu mcp.server.fastmcp.
+    "mcp[cli]>=1.12,<2",
+    # O Cloudflare do domínio desafia qualquer cliente que não seja navegador;
+    # todas as chamadas saem de dentro de um Chrome real (ver transporte.py).
+    "playwright>=1.45",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+mcp-arrendamento = "mcp_arrendamento.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_arrendamento"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Não depende do .pth da instalação editável: no macOS ele pode ganhar a flag
+# "hidden" (iCloud em ~/Documents) e o Python 3.12+ passa a ignorá-lo.
+pythonpath = ["src"]
