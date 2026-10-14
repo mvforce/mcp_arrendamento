@@ -1,0 +1,19 @@
+[Unit]
+Description=Tela virtual do MCP Arrendamento
+
+[Service]
+Type=simple
+User=marcus
+Group=marcus
+WorkingDirectory=/home/marcus/apps/mcp-arrendamento
+Environment=HOME=/home/marcus
+Environment=DISPLAY=:99
+Environment=PYTHONPATH=/home/marcus/apps/mcp-arrendamento/src
+Environment=ARRENDAMENTO_URL=https://arrendamento.antaq.gov.br
+Environment=ARRENDAMENTO_JANELA=visivel
+UMask=0077
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1366x768x24 -nolisten tcp -ac
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

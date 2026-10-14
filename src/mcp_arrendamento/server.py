@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import base64
+import binascii
+import hashlib
 import mimetypes
 import re
 import sys
@@ -21,7 +24,7 @@ from mcp_arrendamento.cliente import ClienteArrendamento
 from mcp_arrendamento.config import carregar_config
 from mcp_arrendamento.erros import ErroArrendamento, ErroValidacao
 from mcp_arrendamento.navegador import PaginaChrome
-from mcp_arrendamento.seguranca import arquivo_para_envio
+from mcp_arrendamento.seguranca import arquivo_para_envio, nome_para_envio
 from mcp_arrendamento.subentidades import SUBENTIDADES
 from mcp_arrendamento.transporte import Sessao, decodificar_token
 
@@ -64,6 +67,7 @@ conteúdo enviado (nada foi gravado); [api] erro do sistema.
 """
 
 _estado: dict[str, Any] = {}
+_modo_http = False
 
 
 @asynccontextmanager
@@ -71,9 +75,13 @@ async def _ciclo_de_vida(_server: FastMCP):
     try:
         yield {}
     finally:
-        sessao = _estado.pop("sessao", None)
-        if sessao is not None:
-            await sessao.fechar()
+        # No Streamable HTTP este ciclo roda a cada sessão MCP (o SEI Pro abre uma por
+        # chamada): o navegador e o login ficam vivos até o processo terminar.
+        if not _modo_http:
+            sessao = _estado.get("sessao")
+            _estado.clear()
+            if sessao is not None:
+                await sessao.fechar()
 
 
 mcp = FastMCP("arrendamento-antaq", instructions=INSTRUCOES, lifespan=_ciclo_de_vida, log_level="WARNING")
@@ -84,7 +92,8 @@ def _cliente() -> ClienteArrendamento:
     if "cliente" not in _estado:
         config = carregar_config()
         pagina = PaginaChrome(config.base_url, config.perfil_dir, janela=config.janela, canal=config.canal)
-        sessao = Sessao(pagina, login_interativo=config.login_interativo)
+        sessao = Sessao(pagina, login_interativo=config.login_interativo,
+                        login_em_segundo_plano=config.login_segundo_plano)
         _estado.update(config=config, sessao=sessao, cliente=ClienteArrendamento(sessao))
     return _estado["cliente"]
 
@@ -284,17 +293,37 @@ async def arrendamento_enviar_arquivo(
     id_contrato: IdContrato,
     caminho_arquivo: Annotated[str, Field(description="documento local (PDF, Office, imagem) em Downloads, Documentos ou Mesa")],
     confirmar: Confirmar = False,
+    nome_arquivo: Annotated[Optional[str], Field(description="Nome legível aprovado para o anexo, preservando a extensão original.")] = None,
+    conteudo_base64: Annotated[Optional[str], Field(description="Transferência automática pelo SEI Pro ao MCP remoto. O agente não deve produzir nem ler este campo; limite 25 MB.")] = None,
 ) -> dict:
-    """Anexa ao contrato um documento local. Só lê de pastas permitidas, nunca arquivos ocultos."""
+    """Anexa documento local ou transferido pelo SEI Pro, com nome legível e prévia antes de gravar."""
     try:
-        caminho = arquivo_para_envio(caminho_arquivo, carregar_config().pastas_envio)
+        if conteudo_base64 is not None:
+            limite = 25 * 1024 * 1024
+            if not nome_arquivo:
+                raise ErroValidacao("Informe o nome legível do documento transferido.")
+            nome = nome_para_envio(nome_arquivo)
+            if len(conteudo_base64) > 4 * ((limite + 2) // 3):
+                raise ErroValidacao("Arquivo acima do limite de 25 MB.")
+            try:
+                conteudo = base64.b64decode(conteudo_base64, validate=True)
+            except (binascii.Error, ValueError):
+                raise ErroValidacao("Conteúdo base64 inválido.") from None
+            if not conteudo or len(conteudo) > limite:
+                raise ErroValidacao("Arquivo vazio ou acima do limite de 25 MB.")
+            caminho = None
+        else:
+            caminho = arquivo_para_envio(caminho_arquivo, carregar_config().pastas_envio)
+            nome = nome_para_envio(nome_arquivo or caminho.name, caminho.suffix)
+            conteudo = caminho.read_bytes()
     except ErroValidacao as e:
         raise ToolError(f"[validacao] {e}") from None
-    tipo = mimetypes.guess_type(caminho.name)[0] or "application/octet-stream"
+    tipo = mimetypes.guess_type(nome)[0] or "application/octet-stream"
 
     async def op(c: ClienteArrendamento):
-        resultado = await c.enviar_arquivo(id_contrato, caminho.name, caminho.read_bytes(), tipo, confirmar)
-        return {**resultado, "caminho_local": str(caminho)}
+        resultado = await c.enviar_arquivo(id_contrato, nome, conteudo, tipo, confirmar)
+        return {**resultado, "nome_arquivo": nome, "sha256": hashlib.sha256(conteudo).hexdigest(),
+                **({"caminho_local": str(caminho)} if caminho else {"origem": "conteudo_transferido"})}
     return await _executar(op)
 
 
@@ -406,6 +435,19 @@ async def arrendamento_excluir_registro(
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+    if sys.argv[1:2] in (["http"], ["iniciar"]):
+        import os
+
+        os.environ.setdefault("ARRENDAMENTO_LOGIN_SEGUNDO_PLANO", "true")
+        global _modo_http
+        _modo_http = True
+        if sys.argv[1] == "iniciar":
+            from mcp_arrendamento.iniciar import executar
+
+            sys.exit(executar(mcp, sys.argv[2:]))
+        from mcp_arrendamento.http import servir
+
+        return servir(mcp)
     if len(sys.argv) > 1:
         from mcp_arrendamento import cli
 

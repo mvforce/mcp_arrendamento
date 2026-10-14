@@ -10,6 +10,8 @@ isso só sai o que está em pastas permitidas, fora de pastas e arquivos ocultos
 from __future__ import annotations
 
 from pathlib import Path
+import re
+import unicodedata
 from typing import Iterable
 
 from mcp_arrendamento.erros import ErroValidacao
@@ -19,6 +21,23 @@ EXTENSOES_DOCUMENTO = frozenset({
     ".xls", ".xlsx", ".ods", ".csv", ".ppt", ".pptx", ".odp",
     ".jpg", ".jpeg", ".png", ".tif", ".tiff",
 })
+
+
+def nome_para_envio(nome: str, extensao_original: str | None = None) -> str:
+    """Nome exibido no destino; nunca é usado como caminho no servidor."""
+    nome = unicodedata.normalize("NFC", nome)
+    if (not nome or nome != nome.strip() or len(nome) > 200
+            or nome.startswith(".") or nome.endswith((".", " "))
+            or re.search(r'[\x00-\x1f\x7f/\\:*?"<>|]', nome)):
+        raise ErroValidacao("Nome de arquivo inválido: use um nome legível, sem caminho ou caracteres reservados.")
+    extensao = Path(nome).suffix.lower()
+    if extensao not in EXTENSOES_DOCUMENTO:
+        raise ErroValidacao("Extensão não aceita para anexo.")
+    if extensao_original and extensao != extensao_original.lower():
+        raise ErroValidacao("O novo nome deve preservar a extensão original do arquivo.")
+    if nome.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}:
+        raise ErroValidacao("Nome reservado pelo sistema operacional.")
+    return nome
 
 
 def arquivo_para_envio(caminho: str, raizes: Iterable[Path]) -> Path:

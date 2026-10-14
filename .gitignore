@@ -4,3 +4,21 @@ __pycache__/
 .pytest_cache/
 dist/
 .env
+docs/SEI_*.pdf
+.DS_Store
+*.zip
+
+# Credenciais, perfis e estado local
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_casa7*
+token-http*
+perfil-chrome/
+perfil-hmg/
+.mcp-arrendamento/
+*.log
+node_modules/

@@ -128,3 +128,17 @@ def test_mescla_parte_do_registro_atual_e_aplica_so_as_alteracoes():
 def test_caminho_do_registro_simples_e_da_chave_composta():
     assert caminho_registro("bens", 4398, 12) == "/bens/12"
     assert caminho_registro("tipos-servicos-contrato", 4398, 3) == "/tipos-servicos-contrato/4398/3"
+
+
+def test_processo_exige_os_quatro_campos_como_a_tela():
+    with pytest.raises(ErroValidacao, match="dtAto"):
+        montar_payload("contratos-processos", 1, {
+            "nrProcesso": "50300.000001/2026-01", "dsAtoAntaq": "Acórdão", "nrAto": "10",
+        })
+
+
+def test_processo_exige_numero_no_formato_do_sei():
+    with pytest.raises(ErroValidacao, match="11111.111111/1111-11"):
+        montar_payload("contratos-processos", 1, {
+            "nrProcesso": "50300.1/2026", "dsAtoAntaq": "Acórdão", "nrAto": "10", "dtAto": "2026-01-02",
+        })

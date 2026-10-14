@@ -107,3 +107,46 @@ async def test_recusa_do_sistema_chega_com_a_mensagem_e_nao_abre_login_interativ
     assert e.value.origem == "acesso"
     assert "inativo" in str(e.value)
     assert pagina.logins_interativos == 0
+
+
+class PaginaLoginLento(PaginaFalsa):
+    """O login interativo só termina quando o teste libera (usuário fazendo MFA)."""
+
+    def __init__(self, token):
+        super().__init__(silencioso=[None, None, None])
+        import asyncio
+        self.liberar = asyncio.Event()
+        self.token = token
+
+    async def login_interativo(self):
+        self.logins_interativos += 1
+        await self.liberar.wait()
+        return self.token
+
+
+async def test_login_em_segundo_plano_responde_na_hora_pedindo_para_concluir_o_login():
+    pagina = PaginaLoginLento(_token_valido())
+    sessao = Sessao(pagina, login_interativo=True, login_em_segundo_plano=True)
+    with pytest.raises(ErroArrendamento, match="janela de login") as e:
+        await sessao.requisitar("GET", "/auth/me")
+    assert e.value.origem == "sessao"
+    # Enquanto o usuário não termina, outra chamada não abre uma segunda janela.
+    with pytest.raises(ErroArrendamento, match="janela de login"):
+        await sessao.requisitar("GET", "/auth/me")
+    import asyncio
+    await asyncio.sleep(0)  # deixa a tarefa de login começar
+    assert pagina.logins_interativos == 1
+
+
+async def test_depois_do_login_em_segundo_plano_a_chamada_seguinte_funciona():
+    import asyncio
+    t = _token_valido()
+    pagina = PaginaLoginLento(t)
+    sessao = Sessao(pagina, login_interativo=True, login_em_segundo_plano=True)
+    with pytest.raises(ErroArrendamento):
+        await sessao.requisitar("GET", "/auth/me")
+    pagina.liberar.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    resp = await sessao.requisitar("GET", "/auth/me")
+    assert resp.status == 200 and pagina.tokens_enviados == [t]

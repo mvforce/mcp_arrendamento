@@ -157,3 +157,41 @@ def test_tipo_de_outorga_legado_nao_muda_ao_alterar_outro_campo():
 def test_tipo_de_outorga_numerico_desconhecido_pede_o_texto():
     with pytest.raises(ErroValidacao, match="noTipoOutorga"):
         montar_novo_contrato(_dados_novos(noTipoOutorga=9), agora_ms=0)
+
+
+@pytest.mark.parametrize("campo, informado, gravado", [
+    ("noRenovacao", "não possui", "Nao possui"),
+    ("noRenovacao", "POSSUI", "Possui"),
+    ("noRenovacao", "Não", "Nao possui"),
+    ("noRenovacao", "Sim", "Possui"),
+    ("dsExercida", "nao", "Não"),
+    ("dsExercida", "sim", "Sim"),
+])
+def test_prorrogacao_e_exercida_viram_os_valores_do_select_da_tela(campo, informado, gravado):
+    p = montar_novo_contrato(_dados_novos(**{campo: informado}), agora_ms=0)
+    assert p[campo] == gravado
+
+
+def test_prorrogacao_invalida_lista_as_opcoes():
+    with pytest.raises(ErroValidacao, match="Nao possui"):
+        montar_novo_contrato(_dados_novos(noRenovacao="talvez"), agora_ms=0)
+
+
+def test_descricao_dos_campos_traz_as_opcoes_dos_selects():
+    from mcp_arrendamento.contratos import descrever_campos
+    campos = {c["nome"]: c for c in descrever_campos()}
+    assert "Nao possui" in campos["noRenovacao"]["tipo"]
+    assert "Nao Operacional" in campos["tpContrato"]["tipo"]
+    assert "Em Apuracao" in campos["stLicitacaoPrevia"]["tipo"]
+
+
+@pytest.mark.parametrize("informado, gravado", [
+    ("Cessao de Uso Onerosa", "Cessão de Uso Onerosa"),      # descrição sem acento de listar_opcoes
+    ("Cessao de Uso Nao Onerosa", "Cessão de Uso Não Onerosa"),
+    ("Contrato de Transicao", "Contrato de Transição"),
+    ("contrato de uso temporario", "Contrato de Uso Temporário"),
+    ("Outras Formas Contratuais", "Outras Formas Contratuais"),
+])
+def test_descricao_sem_acento_da_lista_de_opcoes_vira_o_valor_gravado_pela_tela(informado, gravado):
+    p = montar_novo_contrato(_dados_novos(noTipoOutorga=informado), agora_ms=0)
+    assert p["noTipoOutorga"] == gravado

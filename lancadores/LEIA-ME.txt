@@ -1,0 +1,67 @@
+MCP ARRENDAMENTO - servidor local para o Agente de IA do SEI Pro
+
+O que é
+  Um programa que fica ligado no seu computador e permite ao Agente de IA do SEI Pro consultar
+  e cadastrar contratos no Sistema de Arrendamento da ANTAQ, com o seu login.
+
+Do que precisa
+  - Google Chrome instalado.
+  - Internet na primeira vez (baixa o Python e as bibliotecas, uns 200 MB).
+  - Acesso seu ao Sistema de Arrendamento (login Microsoft da ANTAQ).
+
+Como ligar
+  Clique duas vezes em "Iniciar MCP Arrendamento". Deixe a janela aberta (pode minimizar).
+  Ele pergunta o ambiente: 1 para Produção (dados reais) ou 2 para Homologação (testes, precisa
+  da VPN). Só um fica ligado por vez; para trocar, feche a janela e abra de novo.
+  No Mac, na primeira vez: clique com o botão direito no arquivo > Abrir > Abrir.
+  No Windows, se aparecer "O Windows protegeu o computador": Mais informações > Executar assim mesmo.
+
+Primeira vez: cadastrar o conector no SEI Pro
+  1. Ligue o MCP Arrendamento (passo acima) e deixe a janela aberta.
+  2. No SEI, abra o painel do SEI Pro > aba "Agente de IA" > botão de configuração (canto superior
+     direito do painel).
+  3. Vá em "O que o agente pode" > "Conectores (MCP)" e clique em "Novo conector".
+  4. Preencha:
+       Nome:                  Arrendamento
+       Endereço do servidor:  http://127.0.0.1:8765/mcp
+       Autenticação > Cabeçalho:  Authorization   (já vem preenchido)
+       Autenticação > Valor:      clique duas vezes em "Copiar token do conector" (nesta pasta) e
+                                  cole com Ctrl+V (Cmd+V no Mac). O valor começa com "Bearer " e
+                                  sai da área de transferência sozinho depois de 60 segundos.
+  5. Clique em "Adicionar". O Chrome pede autorização para acessar 127.0.0.1: aceite.
+     Se o pedido não aparecer, clique no botão "Testar conexão" do conector.
+  6. O conector deve aparecer como "conectado · 27 ferramenta(s)".
+     Se aparecer "sem resposta", o MCP não está ligado: ligue e clique em "Testar de novo".
+
+  O valor é uma senha do seu computador e fica guardado só neste navegador. Não envie a ninguém.
+
+  Permissões: no botão "Ferramentas" do conector, cada ferramenta começa em "Requer aprovação"
+  (o agente mostra o que vai enviar e espera o seu clique). Recomendado manter assim.
+
+Primeira vez: cadastrar a skill de cadastro de contratos
+  1. Na configuração do Agente de IA, vá em "Skills" e crie uma skill nova.
+  2. Preencha:
+       Nome:         Cadastrar contrato no Sistema de Arrendamento
+       Atalho:       cadastrar-arrendamento
+       Quando usar:  Cadastrar no Sistema de Arrendamento o contrato que chegou num processo do SEI.
+       Conteúdo:     cole o texto do arquivo "skill-cadastrar-contrato-arrendamento.md", que está
+                     nesta pasta (abra com o Bloco de Notas ou o Editor de Texto).
+     Deixe "Arquivo no GitHub" em branco.
+  3. Para usar: abra o processo no SEI e digite /cadastrar-arrendamento na conversa do agente.
+
+Login
+  Na primeira chamada do agente, o Chrome abre para o login da Microsoft (com MFA).
+  Responda "Sim" em "Continuar conectado?". Depois o Chrome fica minimizado.
+
+Como desligar
+  Feche a janela do "Iniciar MCP Arrendamento".
+
+O que sai do seu computador
+  O agente envia ao MCP os dados do contrato; o MCP fala só com o Sistema de Arrendamento da ANTAQ.
+  Por padrão o SEI Pro mascara nomes de pessoas ([PESSOA_1]). Se a razão social chegar mascarada,
+  o agente pergunta o valor antes de gravar.
+
+Problemas
+  - "não está rodando neste computador" no SEI Pro: ligue de novo pelo "Iniciar MCP Arrendamento".
+  - "[sessao] ... janela de login": conclua o login no Chrome que abriu e repita o pedido.
+  - "[acesso] ... inativo": peça à SOG a ativação do seu usuário no Sistema de Arrendamento.

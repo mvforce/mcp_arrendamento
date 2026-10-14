@@ -115,6 +115,12 @@ class Pagina(Protocol):
 _MARGEM_RENOVACAO_S = 300
 
 
+_AGUARDANDO_LOGIN = (
+    "A janela de login da Microsoft foi aberta no Chrome do MCP Arrendamento, nesta máquina. "
+    "Peça ao usuário para concluir o login (com MFA) e repita a chamada em seguida."
+)
+
+
 class Sessao:
     """Mantém o token válido e repete a chamada quando a borda ou a API pedem.
 
@@ -123,9 +129,13 @@ class Sessao:
     - Desafio do Cloudflare: deixa o navegador resolver e repete.
     """
 
-    def __init__(self, pagina: Pagina, login_interativo: bool = True):
+    def __init__(self, pagina: Pagina, login_interativo: bool = True, login_em_segundo_plano: bool = False):
         self._pagina = pagina
         self._login_interativo = login_interativo
+        # No modo HTTP o cliente desiste da chamada em ~60 s; o MFA demora mais. A janela
+        # abre, a chamada responde na hora pedindo para concluir o login e repetir.
+        self._segundo_plano = login_em_segundo_plano
+        self._login: Optional[asyncio.Task] = None
         self._token: Optional[str] = None
         self._trava = asyncio.Lock()
 
@@ -134,8 +144,19 @@ class Sessao:
         return self._token
 
     async def _renovar(self) -> str:
+        if self._login is not None:
+            if not self._login.done():
+                raise ErroArrendamento(_AGUARDANDO_LOGIN, "sessao")
+            tarefa, self._login = self._login, None
+            token = tarefa.result()
+            if token:
+                self._token = token
+                return token
         token = await self._pagina.token_silencioso()
         if not token and self._login_interativo:
+            if self._segundo_plano:
+                self._login = asyncio.create_task(self._pagina.login_interativo())
+                raise ErroArrendamento(_AGUARDANDO_LOGIN, "sessao")
             token = await self._pagina.login_interativo()
         if not token:
             raise ErroArrendamento(

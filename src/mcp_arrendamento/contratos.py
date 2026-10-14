@@ -183,12 +183,57 @@ def _tipo_outorga_informado(valor: Any) -> Any:
     chave = "".join(
         c for c in unicodedata.normalize("NFD", texto) if not unicodedata.combining(c)
     ).upper()
-    return _OUTORGA_POR_ROTULO.get(chave, texto)
+    if chave in _OUTORGA_POR_ROTULO:
+        return _OUTORGA_POR_ROTULO[chave]
+    # A lista de opções da API vem sem acento ("Cessao de Uso Onerosa"); a tela grava com.
+    for gravado in _OUTORGA_POR_CODIGO.values():
+        sem_acento = "".join(
+            c for c in unicodedata.normalize("NFD", gravado) if not unicodedata.combining(c)
+        ).upper()
+        if sem_acento == chave:
+            return gravado
+    return texto
+
+
+# Selects da tela: valor gravado → formas aceitas (sem acento, minúsculas).
+_SELECTS = {
+    "noRenovacao": {"Possui": ("possui", "sim"), "Nao possui": ("nao possui", "nao")},
+    "dsExercida": {"Sim": ("sim",), "Não": ("nao",)},
+}
+# Opções fixas mostradas em arrendamento_consultar_campos.
+_OPCOES_DESCRITAS = {
+    "noRenovacao": "Possui · Nao possui",
+    "dsExercida": "Sim · Não",
+    "tpContrato": "1 Operacional · 2 Nao Operacional",
+    "stLicitacaoPrevia": "1 Sim · 2 Nao · 3 Em Apuracao",
+    "noTipoOutorga": "descrição de arrendamento_listar_opcoes('tipos-outorga') ou o código 1 a 6",
+    "cdTrigrama": "trigrama de arrendamento_listar_opcoes('portos')",
+    "idTipoLicitacao": "id de arrendamento_listar_opcoes('tipos-licitacao')",
+}
+
+
+def _sem_acento(texto: str) -> str:
+    nfd = unicodedata.normalize("NFD", texto)
+    return "".join(c for c in nfd if not unicodedata.combining(c)).strip().casefold()
+
+
+def _select_informado(nome: str, valor: Any) -> Any:
+    if _vazio(valor):
+        return valor
+    chave = _sem_acento(str(valor))
+    for gravado, formas in _SELECTS[nome].items():
+        if chave in formas:
+            return gravado
+    raise ErroValidacao(f"{nome}: valor {valor!r} não aceito. Use: {' ou '.join(_SELECTS[nome])}.")
 
 
 def _preparar_informados(dados: dict) -> dict:
+    dados = dict(dados)
     if "noTipoOutorga" in dados:
-        return {**dados, "noTipoOutorga": _tipo_outorga_informado(dados["noTipoOutorga"])}
+        dados["noTipoOutorga"] = _tipo_outorga_informado(dados["noTipoOutorga"])
+    for nome in _SELECTS:
+        if nome in dados:
+            dados[nome] = _select_informado(nome, dados[nome])
     return dados
 
 
@@ -273,6 +318,8 @@ def descrever_campos() -> list[dict]:
     rotulos["dtAssinaturaAditivo"] = "Data Assinatura do Aditivo (obrigatória no aditivo)"
 
     def tipo(nome: str) -> str:
+        if nome in _OPCOES_DESCRITAS:
+            return _OPCOES_DESCRITAS[nome]
         if nome in _DATAS:
             return "data AAAA-MM-DD"
         if nome in _CNPJS:
