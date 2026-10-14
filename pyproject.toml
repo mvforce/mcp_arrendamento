@@ -31,3 +31,4 @@ testpaths = ["tests"]
 # Não depende do .pth da instalação editável: no macOS ele pode ganhar a flag
 # "hidden" (iCloud em ~/Documents) e o Python 3.12+ passa a ignorá-lo.
 pythonpath = ["src"]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]

@@ -322,3 +322,10 @@ async def test_previa_da_exclusao_lista_os_anexos_que_serao_apagados(contrato):
     assert r["executado"] is False
     assert r["arquivos"] == [{"idArquivo": 11, "noLink": "a.pdf"}]
     assert "DELETE" not in [m for m, _ in t.metodos()]
+
+
+async def test_erro_de_validacao_da_api_mostra_os_campos_recusados():
+    corpo = {"title": "One or more validation errors occurred.", "errors": {"dtAto": ["The dtAto field is required."]}}
+    t = TransporteFalso({("GET", "/contratos-arrendamento/1"): _json(corpo, 400)})
+    with pytest.raises(ErroArrendamento, match="dtAto.*required"):
+        await ClienteArrendamento(t).obter_contrato(1)

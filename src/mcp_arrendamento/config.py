@@ -15,6 +15,7 @@ class Config:
     janela: str
     canal: Optional[str]
     login_interativo: bool
+    login_segundo_plano: bool
     pasta_downloads: Path
     pastas_envio: tuple[Path, ...]
 
@@ -45,6 +46,7 @@ def carregar_config(env: Mapping[str, str] = os.environ) -> Config:
         # "chromium" usa o Chromium baixado pelo Playwright (sem channel).
         canal=None if canal in ("", "chromium") else canal,
         login_interativo=_booleano(env.get("ARRENDAMENTO_LOGIN_INTERATIVO"), True),
+        login_segundo_plano=_booleano(env.get("ARRENDAMENTO_LOGIN_SEGUNDO_PLANO"), False),
         pasta_downloads=Path(
             env.get("ARRENDAMENTO_PASTA_DOWNLOADS") or Path.home() / "Downloads" / "Arrendamento"
         ).expanduser(),

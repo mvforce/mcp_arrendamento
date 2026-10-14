@@ -28,6 +28,7 @@ class Campo:
     opcoes: tuple = ()
     sinonimos: dict = field(default_factory=dict)
     descricao: str = ""
+    formato: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,8 @@ def converter_campo(campo: Campo, valor: Any) -> Any:
         return _PADRAO_POR_TIPO[campo.tipo]
     if campo.tipo == "texto":
         valor = str(valor).strip()
+        if campo.formato and not re.match(campo.formato, valor):
+            raise ErroValidacao(f"{campo.nome}: {campo.descricao or 'formato inválido'} (recebido {valor!r}).")
     elif campo.tipo == "numero":
         valor = _numero(campo, valor)
     elif campo.tipo == "inteiro":
@@ -168,10 +171,11 @@ _SUBENTIDADES = (
     Subentidade(
         "contratos-processos", "Processos e atos da ANTAQ", "idContratoProcesso",
         (
-            _texto("nrProcesso", descricao="número do processo SEI"),
-            _texto("dsAtoAntaq", opcoes=("Acórdão", "Resolução")),
-            _texto("nrAto"),
-            Campo("dtAto", "dia"),
+            _texto("nrProcesso", True, formato=r"^\d{5}\.\d{6}/\d{4}-\d{2}$",
+                   descricao="número do processo SEI, formato 11111.111111/1111-11"),
+            _texto("dsAtoAntaq", True, opcoes=("Acórdão", "Resolução")),
+            _texto("nrAto", True, descricao="ex. SEI nº 2888101"),
+            Campo("dtAto", "dia", True),
         ),
     ),
     Subentidade(

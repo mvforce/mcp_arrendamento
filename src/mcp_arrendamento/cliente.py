@@ -50,6 +50,9 @@ def _detalhe(resp: Resposta) -> str:
     except ValueError:
         return ""
     if isinstance(corpo, dict):
+        erros = corpo.get("errors")
+        if isinstance(erros, dict) and erros:  # validação do ASP.NET: campo → mensagens
+            return "; ".join(f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}" for k, v in erros.items())
         for chave in ("detail", "message", "title"):
             if corpo.get(chave):
                 return str(corpo[chave])

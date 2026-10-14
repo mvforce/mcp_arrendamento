@@ -52,6 +52,17 @@ Servidor MCP (Python, FastMCP, stdio) para `arrendamento.antaq.gov.br`. Mapa da 
   permitidas, sem ocultos, links resolvidos, só extensões de documento). Não relaxar: o modelo pode
   ser induzido por texto lido do sistema a pedir o envio de `~/.ssh/...`.
 
+- **Modo HTTP local** (`python -m mcp_arrendamento http`, `http.py`): para o Agente de IA do SEI Pro
+  (extensão; cliente Streamable HTTP, token fixo em cabeçalho, desiste em 60 s). Só 127.0.0.1, token
+  em `~/.mcp-arrendamento/token-http`, checagem de Origin do SDK desligada (a origem é
+  `chrome-extension://`) e substituída por Host local + token. Login vai para segundo plano.
+  Hospedagem remota (Railway) foi descartada: VPN, Cloudflare e MFA por usuário.
+- **Pacote de um clique** (`scripts/empacotar.py`, `lancadores/`, `iniciar.py`): uv embutido conferido por
+  SHA-256, dependências com hash, pergunta de ambiente, prova de identidade em `/identidade` (HMAC do
+  desafio com o token) contra programa que ocupe a porta, token só copiado a pedido e apagado em 60 s.
+  Windows nunca foi executado.
+- **Convenções da GPO** para cessão de uso estão em `skills/cadastrar-contrato-arrendamento.md`.
+
 ## Arquitetura
 
 `transporte.Sessao` (token, renovação, nova tentativa em 401 e desafio) → `navegador.PaginaChrome`

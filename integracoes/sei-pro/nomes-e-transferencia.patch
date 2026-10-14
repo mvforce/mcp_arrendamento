@@ -1,0 +1,290 @@
+--- a/agente-ia/src/tools/baixar.ts
++++ b/agente-ia/src/tools/baixar.ts
+@@ -69,11 +69,14 @@
+  * nome porque um processo costuma ter vários "Anexo": sem ele, um
+  * sobrescreveria o outro.
+  */
+-export function nomeDeArquivo(d: { titulo: string; numero: string; nomeOriginal: string; tipo: string }): string {
++export function nomeDeArquivo(d: { titulo: string; numero: string; nomeOriginal: string; tipo: string; nomeLegivel?: string }): string {
+   const doOriginal = /\.([A-Za-z0-9]{1,8})$/.exec(d.nomeOriginal.trim())?.[1]?.toLowerCase();
+   const extensao = doOriginal ?? POR_TIPO[d.tipo.toLowerCase().split(";")[0].trim()] ?? "bin";
+   const fim = ` (${d.numero.replace(/\D/g, "") || "sem numero"}).${extensao}`;
+-  const base = pedacoSeguro(d.titulo).slice(0, MAX_NOME - fim.length).trimEnd() || "documento";
++  const escolhido = d.nomeLegivel?.trim();
++  if (escolhido && /[\/\\\u0000-\u001f\u007f]/.test(escolhido)) throw new Error("Informe apenas o nome legível do arquivo, sem caminho nem barras.");
++  const titulo = escolhido ? escolhido.replace(/\.[A-Za-z0-9]{1,8}$/, "").replace(new RegExp(` \\(${d.numero.replace(/\D/g, "")}\\)$`), "") : d.titulo;
++  const base = pedacoSeguro(titulo).slice(0, MAX_NOME - fim.length).trimEnd() || "documento";
+   return `${base}${fim}`;
+ }
+ 
+@@ -102,8 +105,8 @@
+ }
+ 
+ /** Nome e destino a partir do que o SEI informou; `erro` quando o tipo não é aceito. */
+-function destinoDe(m: Meta): { nome: string; destino: string; erro?: string } {
+-  const nome = nomeDeArquivo({ titulo: m.titulo, numero: m.numero, nomeOriginal: m.arquivo?.nome ?? "", tipo: m.arquivo?.tipo ?? "" });
++function destinoDe(m: Meta, nomeLegivel?: string): { nome: string; destino: string; erro?: string } {
++  const nome = nomeDeArquivo({ titulo: m.titulo, numero: m.numero, nomeOriginal: m.arquivo?.nome ?? "", tipo: m.arquivo?.tipo ?? "", nomeLegivel });
+   const destino = destinoDoArquivo(m.processo, nome);
+   if (EXTENSOES.has(extensaoDe(nome))) return { nome, destino };
+   return { nome, destino, erro: `O arquivo do documento ${m.numero} é do tipo .${extensaoDe(nome)}, que o agente não grava no computador (só documentos e imagens: pdf, docx, xlsx, jpg, png, txt...). Peça ao usuário para baixá-lo pelo SEI, se for o caso.` };
+@@ -119,6 +122,11 @@
+   return bytes;
+ }
+ 
++export async function hashArquivo(bytes: Uint8Array): Promise<string> {
++  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
++  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
++}
++
+ export function toolsBaixar(o: OpcoesBaixar): DefTool[] {
+   const CAMPO_DESTINO = "Salvar em";
+ 
+@@ -126,14 +134,14 @@
+     nome: "documento_baixar",
+     descricao:
+       "Baixa um documento do SEI para a pasta Downloads do usuário e devolve o caminho do arquivo. Use quando um conector precisar do arquivo em disco. Só documento externo (PDF e outros anexos); documento escrito no editor do SEI ainda não. O usuário aprova cada download. Passe o 'caminho' devolvido ao conector exatamente como veio.",
+-    parametros: s.objeto({ documento: s.texto({ descricao: "Nº SEI do documento." }) }),
++    parametros: s.objeto({ documento: s.texto({ descricao: "Nº SEI do documento." }), "nome_arquivo?": s.texto({ min: 1, max: 200, descricao: "Nome legível definido pelo agente com base no documento lido, sem caminho. A extensão original e o número SEI serão preservados. Ex.: Contrato de Cessão de Uso 002-2026 - Porto de Itaqui.pdf." }) }),
+     efeito: "escrita",
+     rotulo: (a) => `Baixar o documento ${String(a.documento)} para o computador`,
+     previsualizar: async (a, ctx: ContextoTool): Promise<PreviaItem[]> => {
+       const m = await ctx.sei<Meta>("documento.baixar", { numero: String(a.documento), somenteMetadados: true });
+       const alvo = `${m.titulo} (SEI ${m.numero})`;
+       if (!m.baixavel) return [{ alvo, mudancas: [], resumo: "", erro: NATIVO(m.numero) }];
+-      const d = destinoDe(m);
++      const d = destinoDe(m, a.nome_arquivo as string | undefined);
+       if (d.erro) return [{ alvo, mudancas: [], resumo: "", erro: d.erro }];
+       return [
+         {
+@@ -150,7 +158,7 @@
+     },
+     executar: async (a, ctx: ContextoTool) => {
+       const r = await ctx.sei<Meta & { arquivo: { base64: string; tipo: string; nome: string; tamanho: number } }>("documento.baixar", { numero: String(a.documento) });
+-      const { nome, destino, erro } = destinoDe(r);
++      const { nome, destino, erro } = destinoDe(r, a.nome_arquivo as string | undefined);
+       if (erro) throw new Error(erro);
+       // Vale o que o usuário viu NO CARTÃO DESTE PASSO (a prévia que o motor
+       // entrega junto com a execução), e não uma lembrança guardada aqui: um
+@@ -160,14 +168,17 @@
+       if (!visto) {
+         throw new Error(`O arquivo do documento ${r.numero} não é o que foi aprovado no cartão (o documento mudou no SEI, ou o download não passou pela aprovação). Nada foi gravado: chame documento_baixar de novo, sozinho, para o usuário aprovar.`);
+       }
+-      const salvo = await o.salvar({ destino, bytes: base64ParaBytes(r.arquivo.base64), tipo: r.arquivo.tipo || "application/octet-stream" });
+-      await o.registrar({ id: salvo.id, caminho: salvo.caminho, nome, processo: r.processo, documento: r.numero, tamanho: salvo.tamanho, quando: (o.agora ?? Date.now)() });
++      const bytes = base64ParaBytes(r.arquivo.base64);
++      const sha256 = await hashArquivo(bytes);
++      const salvo = await o.salvar({ destino, bytes, tipo: r.arquivo.tipo || "application/octet-stream" });
++      await o.registrar({ id: salvo.id, caminho: salvo.caminho, nome, processo: r.processo, documento: r.numero, tamanho: bytes.length, sha256, quando: (o.agora ?? Date.now)() });
+       return {
+         aplicado: true,
+         documento: r.numero,
+         titulo: r.titulo,
+         processo: r.processo,
+         caminho: salvo.caminho,
++        nome_arquivo: nome,
+         tamanho: salvo.tamanho,
+         tipo: salvo.tipo,
+         como_usar: "Passe 'caminho' ao conector exatamente como está aqui.",
+--- a/agente-ia/src/painel/baixados.ts
++++ b/agente-ia/src/painel/baixados.ts
+@@ -22,6 +22,8 @@
+   processo: string;
+   documento: string;
+   tamanho: number;
++  /** Hash do conteúdo aprovado, para conferir antes de transferir ao MCP remoto. */
++  sha256?: string;
+   quando: number;
+ }
+ 
+--- a/agente-ia/src/painel/main.ts
++++ b/agente-ia/src/painel/main.ts
+@@ -2418,6 +2418,7 @@
+   private toolsDeConectores(): ReturnType<typeof toolsMcp> {
+     return toolsMcp({
+       arquivos: () => this.baixados.map((b) => b.caminho),
++      baixados: () => this.baixados,
+       conectores: () => this.conectores,
+       guardar: async (c) => {
+         this.conectores = this.conectores.map((x) => (x.id === c.id ? c : x));
+--- a/agente-ia/src/mcp/tools.ts
++++ b/agente-ia/src/mcp/tools.ts
+@@ -11,6 +11,8 @@
+ import { ClienteMcp, ErroMcp, enderecoLocal } from "./cliente";
+ import { acharConector, acharTool, conferirEndereco, destinoDe, nomeDeExibicao, permissaoDe, toolsVisiveis, type Conector } from "./conectores";
+ import { origemAutorizada } from "./verificacao";
++import { conteudoDoBaixado } from "./arquivo";
++import type { Baixado } from "../painel/baixados";
+ import type { ToolMcp } from "./protocolo";
+ import { s } from "../motor/esquema";
+ import { definirTool, type ContextoTool, type DefTool } from "../motor/tools";
+@@ -28,6 +30,8 @@
+    * Passam ao conector como são: mascarado, o caminho não abre arquivo nenhum.
+    */
+   arquivos?(): string[];
++  /** Downloads aprovados, com hash, para envio ao Arrendamento por túnel privado. */
++  baixados?(): Baixado[];
+ }
+ 
+ /**
+@@ -202,17 +206,27 @@
+       // que a escrita no SEI leve o valor real. O que sai para um terceiro
+       // tem de voltar a ser rótulo.
+       const brutos = (a.argumentos ?? {}) as Record<string, unknown>;
++      const props = (t.esquema as { properties?: Record<string, unknown> }).properties;
++      const transferir = t.nome === "arrendamento_enviar_arquivo" && !!props?.conteudo_base64 && !!o.baixados;
+       let args: Record<string, unknown>;
+       try {
+         // Só conector da própria máquina: é o único que consegue abrir o
+         // arquivo, e o título do documento no caminho levaria nome e CPF a um
+         // serviço de terceiro.
+-        const protegido = protegerArquivos(brutos, enderecoLocal(c.url) ? (o.arquivos?.() ?? []) : [], ctx.anonimizar);
++        const protegido = protegerArquivos(brutos, enderecoLocal(c.url) || transferir ? (o.arquivos?.() ?? []) : [], ctx.anonimizar);
+         args = protegido.recolocar(JSON.parse(ctx.anonimizar(JSON.stringify(protegido.args))) as Record<string, unknown>);
+       } catch {
+         // Nada sai do navegador sem passar pelo mascaramento: se ele falhou,
+         // a chamada não acontece.
+         return erro("Não foi possível mascarar os dados pessoais destes argumentos, então nada foi enviado. Simplifique os parâmetros e tente de novo.");
++      }
++
++      const baixado = transferir ? o.baixados?.().find((b) => b.caminho === args.caminho_arquivo) : undefined;
++      if (transferir) {
++        if (!baixado?.sha256) return erro("Use documento_baixar novamente: o arquivo precisa ter um download aprovado com verificação de conteúdo.");
++        if (brutos.conteudo_base64 !== undefined) return erro("Não informe bytes na conversa. O SEI Pro transfere o documento aprovado diretamente ao MCP.");
++        if (args.nome_arquivo !== undefined && args.nome_arquivo !== baixado.nome) return erro("Escolha o nome legível em documento_baixar e use o nome aprovado, sem renomear após o download.");
++        args.nome_arquivo = baixado.nome;
+       }
+ 
+       // Primeira vez neste conector: o usuário precisa saber que o conteúdo sai.
+@@ -224,10 +238,18 @@
+         await guardar({ consentido: true });
+       }
+ 
+-      if (permissao === "aprovar") {
+-        const decisao = await ctx.ui.aprovarExterno?.({ conector: c.nome, tool: t.nome, descricao: t.descricao, argumentos: args });
++      if (permissao === "aprovar" || transferir) {
++        const decisao = await ctx.ui.aprovarExterno?.({ conector: c.nome, tool: t.nome, descricao: transferir ? `${t.descricao} O documento será transferido ao servidor MCP com seus dados reais, sem máscara.` : t.descricao, argumentos: args });
+         if (!decisao?.permitido) return erro("O usuário não autorizou esta chamada.");
+-        if (decisao.sempre) await guardar({ permissoes: { ...c.permissoes, [t.nome]: "sempre" } });
++        if (decisao.sempre && !transferir) await guardar({ permissoes: { ...c.permissoes, [t.nome]: "sempre" } });
++      }
++
++      let envio = args;
++      if (transferir && baixado) {
++        // Só depois da aprovação: relê do SEI e confere o hash da cópia aprovada.
++        const conteudo = await conteudoDoBaixado(baixado, ctx);
++        // O caminho do Windows não precisa sair para o servidor Linux.
++        envio = { ...args, caminho_arquivo: "", conteudo_base64: conteudo };
+       }
+ 
+       // Cliente novo a cada chamada: a sessão não atravessa chamadas, então
+@@ -236,7 +258,7 @@
+       let texto: string;
+       try {
+         await cliente.iniciar(ctx.sinal);
+-        texto = await cliente.chamar(t.nome, args, ctx.sinal);
++        texto = await cliente.chamar(t.nome, envio, ctx.sinal);
+       } catch (e) {
+         // Só o servidor que não atendeu muda o estado do conector. Erro que a
+         // FERRAMENTA devolveu (login pendente, validação) segue como veio: o
+--- a/agente-ia/tests/verificar.ts
++++ b/agente-ia/tests/verificar.ts
+@@ -3,6 +3,7 @@
+ import { verificarSkills } from "./verificar-skills";
+ import { verificarMcp } from "./verificar-mcp";
+ import { verificarBaixar } from "./verificar-baixar";
++import { verificarArquivoRemoto } from "./verificar-arquivo-remoto";
+ import { verificarMcpBusca } from "./verificar-mcp-busca";
+ import { verificarMcpLocal } from "./verificar-mcp-local";
+ import { verificarRespostaUi } from "./verificar-resposta-ui";
+@@ -55,6 +56,7 @@
+ await verificarMcpLocal();
+ await verificarMcpBusca();
+ await verificarBaixar();
++await verificarArquivoRemoto();
+ await verificarRespostaUi();
+ verificarDesfazer();
+ verificarRegras();
+--- /dev/null
++++ b/agente-ia/src/mcp/arquivo.ts
+@@ -0,0 +1,24 @@
++import type { Baixado } from "../painel/baixados";
++import type { ContextoTool } from "../motor/tools";
++import { hashArquivo } from "../tools/baixar";
++
++/** Os bytes ficam na ponte SEI -> conector, fora dos argumentos produzidos pela IA. */
++export async function conteudoDoBaixado(b: Baixado, ctx: ContextoTool): Promise<string> {
++  if (!b.sha256) throw new Error("Baixe o documento novamente para registrar o conteúdo aprovado antes de transferi-lo ao MCP.");
++  const r = await ctx.sei<{
++    numero: string; processo: string;
++    arquivo?: { base64: string; tamanho: number };
++  }>("documento.baixar", { numero: b.documento });
++  // A operação já recusa documentos internos e sigilosos. Na resposta com
++  // bytes ela não inclui `baixavel`, que só existe em somenteMetadados.
++  if (r.numero !== b.documento || r.processo !== b.processo || !r.arquivo?.base64) {
++    throw new Error("O documento não corresponde ao download aprovado. Baixe-o novamente.");
++  }
++  if (r.arquivo.base64.length > 4 * Math.ceil(25 * 1024 * 1024 / 3)) throw new Error("Arquivo acima do limite de 25 MB.");
++  const bruto = atob(r.arquivo.base64);
++  const bytes = Uint8Array.from(bruto, (c) => c.charCodeAt(0));
++  if (bytes.length > 25 * 1024 * 1024 || bytes.length !== b.tamanho || await hashArquivo(bytes) !== b.sha256) {
++    throw new Error("O conteúdo do documento mudou desde o download aprovado. Baixe-o novamente antes de anexar.");
++  }
++  return r.arquivo.base64;
++}
+--- /dev/null
++++ b/agente-ia/tests/verificar-arquivo-remoto.ts
+@@ -0,0 +1,53 @@
++import assert from "node:assert/strict";
++import { toolsBaixar, nomeDeArquivo, hashArquivo } from "../src/tools/baixar";
++import { toolsMcp } from "../src/mcp/tools";
++import { conteudoDoBaixado } from "../src/mcp/arquivo";
++import type { Baixado } from "../src/painel/baixados";
++import type { ContextoTool } from "../src/motor/tools";
++import type { Conector } from "../src/mcp/conectores";
++import type { ClienteMcp } from "../src/mcp/cliente";
++
++export async function verificarArquivoRemoto(): Promise<void> {
++  const nome = nomeDeArquivo({ titulo: "Anexo", numero: "123", nomeOriginal: "tecnico.PDF", tipo: "application/pdf", nomeLegivel: "Contrato de Cessão de Uso - Porto de Itaqui.pdf" });
++  assert.equal(nome, "Contrato de Cessão de Uso - Porto de Itaqui (123).pdf");
++  assert.throws(() => nomeDeArquivo({ titulo: "A", numero: "123", nomeOriginal: "a.pdf", tipo: "", nomeLegivel: "../outro.pdf" }));
++  assert.ok(nomeDeArquivo({ titulo: "Anexo", numero: "123", nomeOriginal: "a.pdf", tipo: "", nomeLegivel: "x".repeat(300) }).length <= 120);
++  const bytes = new TextEncoder().encode("%PDF-teste");
++  const base64 = btoa(String.fromCharCode(...bytes));
++  const sha256 = await hashArquivo(bytes);
++  const meta = { numero: "123", titulo: "Anexo", processo: "50300.000001/2026-01", baixavel: true, arquivo: { nome: "a.pdf", tipo: "application/pdf", tamanho: bytes.length, base64 } };
++  const transferido = { numero: meta.numero, processo: meta.processo, arquivo: meta.arquivo };
++  let b: Baixado | undefined;
++  const [baixar] = toolsBaixar({ salvar: async (a) => ({ id: 1, caminho: "C:/Downloads/" + a.destino, tamanho: bytes.length, tipo: a.tipo }), registrar: async (a) => { b = a; } });
++  const ctx = { sinal: new AbortController().signal, sei: async () => meta, anonimizar: (s: string) => s } as unknown as ContextoTool;
++  const args = { documento: "123", nome_arquivo: "Contrato de Cessão de Uso - Porto de Itaqui.pdf" };
++  const previa = await baixar.previsualizar!(args, ctx);
++  await assert.rejects(() => baixar.executar({ ...args, nome_arquivo: "Outro.pdf" }, { ...ctx, previa }), /aprovado/);
++  const result = await baixar.executar(args, { ...ctx, previa }) as Record<string, unknown>;
++  assert.equal(b?.nome, nome); assert.equal(b?.sha256, sha256); assert.equal(result.nome_arquivo, nome);
++  const ctxTransferencia = { ...ctx, sei: async () => transferido } as unknown as ContextoTool;
++  assert.equal(await conteudoDoBaixado(b!, ctxTransferencia), base64);
++  await assert.rejects(() => conteudoDoBaixado({ ...b!, sha256: undefined }, ctx), /novamente/);
++  await assert.rejects(() => conteudoDoBaixado({ ...b!, sha256: "alterado" }, ctx), /mudou/);
++
++  const c: Conector = { id: "a", nome: "Arrendamento", ativo: true, url: "http://127.0.0.1:8765/mcp", auth: { tipo: "nenhuma" }, padrao: "sempre", permissoes: {}, consentido: true,
++    tools: [{ nome: "arrendamento_enviar_arquivo", descricao: "Enviar anexo", esquema: { type: "object", properties: { conteudo_base64: {}, nome_arquivo: {} } } }] };
++  let autorizou = true; let lidos = 0; let cartoes = 0; let chamadas = 0; let enviado: Record<string, unknown> = {};
++  const [, chamar] = toolsMcp({ conectores: () => [c], guardar: async () => {}, arquivos: () => [b!.caminho], baixados: () => [b!], autorizado: async () => true,
++    cliente: () => ({ iniciar: async () => {}, chamar: async (_n: string, a: Record<string, unknown>) => { chamadas++; enviado = a; return "ok"; } }) as unknown as ClienteMcp });
++  const contexto = { ...ctx, consentirConector: async () => true, sei: async () => { lidos++; return transferido; }, ui: { aprovarExterno: async (a: { argumentos: Record<string, unknown> }) => {
++    cartoes++; assert.equal(a.argumentos.conteudo_base64, undefined); assert.equal(lidos, 0); return { permitido: autorizou, sempre: true };
++  } } } as unknown as ContextoTool;
++  const pedido = { servidor: "Arrendamento", tool: "arrendamento_enviar_arquivo", argumentos: { id_contrato: 7, caminho_arquivo: b!.caminho, confirmar: false } };
++  assert.equal(await chamar.executar(pedido, contexto), "ok");
++  assert.equal(enviado.conteudo_base64, base64); assert.equal(enviado.nome_arquivo, nome); assert.equal(enviado.caminho_arquivo, ""); assert.equal(enviado.confirmar, false);
++  assert.equal(cartoes, 1); assert.equal(chamadas, 1);
++  c.url = "https://casa7.tail3c84be.ts.net/mcp";
++  lidos = 0;
++  assert.equal(await chamar.executar(pedido, contexto), "ok");
++  assert.equal(enviado.caminho_arquivo, ""); assert.equal(enviado.conteudo_base64, base64);
++  autorizou = false; lidos = 0;
++  await chamar.executar(pedido, contexto);
++  assert.equal(lidos, 0); assert.equal(chamadas, 2);
++  console.log("Arquivo remoto: nome aprovado, integridade e transferência após consentimento OK.");
++}

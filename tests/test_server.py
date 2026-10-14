@@ -114,3 +114,40 @@ async def test_enviar_arquivo_recusa_chave_ssh_antes_de_qualquer_acesso_a_api(mo
             {"id_contrato": 1, "caminho_arquivo": str(oculta / "id_ed25519"), "confirmar": True},
         )
     assert server._estado == {}
+
+
+async def test_no_modo_http_o_fim_de_uma_sessao_mcp_nao_derruba_o_cliente(monkeypatch):
+    # No Streamable HTTP o ciclo de vida roda a cada sessão MCP, e o SEI Pro abre uma por chamada.
+    from types import SimpleNamespace
+
+    from mcp_arrendamento import server
+
+    fechamentos = []
+
+    async def fechar():
+        fechamentos.append(1)
+
+    estado = {"cliente": object(), "sessao": SimpleNamespace(fechar=fechar), "config": object()}
+    monkeypatch.setattr(server, "_estado", estado)
+    monkeypatch.setattr(server, "_modo_http", True)
+    async with server._ciclo_de_vida(mcp):
+        pass
+    assert set(estado) == {"cliente", "sessao", "config"} and fechamentos == []
+
+
+async def test_no_modo_stdio_o_fim_do_ciclo_fecha_o_navegador_e_limpa_tudo(monkeypatch):
+    from types import SimpleNamespace
+
+    from mcp_arrendamento import server
+
+    fechamentos = []
+
+    async def fechar():
+        fechamentos.append(1)
+
+    estado = {"cliente": object(), "sessao": SimpleNamespace(fechar=fechar), "config": object()}
+    monkeypatch.setattr(server, "_estado", estado)
+    monkeypatch.setattr(server, "_modo_http", False)
+    async with server._ciclo_de_vida(mcp):
+        pass
+    assert estado == {} and fechamentos == [1]
